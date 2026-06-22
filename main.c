@@ -1,0 +1,194 @@
+#include <SDL2/SDL.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "vectors.h"
+
+#define WIDTH  800
+#define HEIGHT 600
+
+typedef struct ray {
+    Vector orig, dir;
+} Ray;
+
+typedef struct sphere {
+    Vector center;
+    double radius;
+    Vector color;
+    int reflective;
+} Sphere;
+
+typedef struct hitrecord {
+    double t;
+    Vector P, N, color;
+} HitRecord;
+
+typedef struct coord {
+    double u[WIDTH], v[HEIGHT];
+} Coord;
+
+// Sphere intersection test - returns -1 if no hit
+double hitSphere(Vector center, double radius, Ray r) {
+    Vector oc = subVector(r.orig, center);
+    double a = dotProduct(r.dir, r.dir);
+    double b = 2.0 * dotProduct(oc, r.dir);
+    double c = dotProduct(oc, oc) - radius * radius;
+    double delta = b * b - 4 * a *c;
+    return delta < 0 ? -1.0 : ((-b - sqrt(delta)) / (2 * a)); 
+}
+
+Vector traceRay(Ray ray, Sphere scene[], int sphereCount, int depth) {
+    // Recursion limit
+    if (depth <= 0) {
+        return initVector(0.0, 0.0, 0.0);
+    }
+
+    int hitIndex = -1;
+    double closest_t = __INT_MAX__;
+
+    // Find closest sphere intersection
+    for (int i = 0; i < sphereCount; i++) {
+        double t = hitSphere(scene[i].center, scene[i].radius, ray);
+        if (t > 0.001 && t < closest_t) {  // 0.001 to avoid shadow acne
+            closest_t = t;
+            hitIndex = i;
+        }
+    }
+
+    // Sky gradient if no hit
+    if (hitIndex == -1) {
+        double t = 0.5 * (ray.dir.y + 1.0);
+        return addVector(scalarMultipl(initVector(1.0, 1.0, 1.0), 1.0 - t), 
+                         scalarMultipl(initVector(0.5, 0.7, 1.0), t));
+    }
+
+    // Compute hit point and normal
+    Vector lightPos = initVector(0.0, 5.0, 0.0);
+    Vector P = addVector(ray.orig, scalarMultipl(ray.dir, closest_t));
+    Vector N = subVector(P, scene[hitIndex].center);
+    N = normaliseVector(N);
+
+    // Light direction
+    Vector L = subVector(lightPos, P);
+    L = normaliseVector(L);
+
+    // Shadow check (hard shadows)
+    Ray shadow = {addVector(P, scalarMultipl(N, 0.001)), L};
+    int shadowHit = -1;
+    double intensity;
+
+    for (int i = 0; i < sphereCount; i++) {
+        double t = hitSphere(scene[i].center, scene[i].radius, shadow);
+        if (t > 0.001) {
+            shadowHit = 1;
+            intensity = 0.2;  // Ambient only
+            break;
+        }
+    }
+
+    // Lambertian lighting if not in shadow
+    if (shadowHit == -1) {
+        intensity = dotProduct(N, L);
+        intensity = intensity < 0.0 ? 0.0 : intensity;
+        intensity += 0.2;  // Ambient light
+        intensity = intensity > 1.0 ? 1.0 : intensity;
+    }
+
+    Vector localColor = scalarMultipl(scene[hitIndex].color, intensity);
+
+    // Reflection for reflective spheres
+    if (scene[hitIndex].reflective) {
+        Vector reflectionDir = subVector(ray.dir, scalarMultipl(N, 2.0 * dotProduct(ray.dir, N)));
+        Ray mirror = {addVector(P, scalarMultipl(N, 0.001)), normaliseVector(reflectionDir)};
+        
+        Vector reflectedColor = traceRay(mirror, scene, sphereCount, depth - 1);
+        
+        return addVector(scalarMultipl(localColor, 0.4), scalarMultipl(reflectedColor, 0.6));
+    }
+
+    return localColor;
+}
+
+void drawScene(Sphere scene[], int sphereCount, Coord map, uint32_t img[]) {
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            // Generate camera ray for each pixel
+            double u = map.u[x];
+            double v = map.v[y];
+            Vector d = initVector(u, v, -1.0);
+            d = normaliseVector(d);
+            Ray ray = {initVector(0.0, 0.0, 0.0), d};
+            
+            // Trace ray with max depth 3
+            Vector color = traceRay(ray, scene, sphereCount, 3);
+            
+            // Convert [0,1] to [0,255] with clamping
+            double R = color.x * 255.0;
+            double G = color.y * 255.0;
+            double B = color.z * 255.0;
+            
+            R = R > 255.0 ? 255.0 : R;
+            G = G > 255.0 ? 255.0 : G;
+            B = B > 255.0 ? 255.0 : B;
+
+            // Pack into framebuffer (ARGB format)
+            img[y * WIDTH + x] = (255 << 24) | ((int)R << 16) | ((int)G << 8) | (int)B;
+        }
+    }
+}
+
+int main(void) {
+    if (SDL_Init(SDL_INIT_VIDEO)) {
+        return 1;
+    }
+    SDL_Window *w = SDL_CreateWindow("Raytracer", SDL_WINDOWPOS_CENTERED, 
+                                     SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, 0);
+    if (!w) {
+        return 1;
+    }
+    SDL_Renderer *r = SDL_CreateRenderer(w, -1, 0);
+    if (!r) {
+        return 1;
+    }
+    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, 
+                                       SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
+    if (!t) {
+        return 1;
+    }
+
+    uint32_t *img = malloc(WIDTH * HEIGHT * sizeof(uint32_t));
+    Coord map;
+    int running = 1;
+    SDL_Event event;
+
+    // Scene setup: 3 spheres
+    Sphere scene[3];
+    scene[0] = (Sphere){initVector(0, 0, -2.0), 0.5, initVector(1.0, 0.0, 0.0), 0};
+    scene[1] = (Sphere){initVector(1.0, 0, -3.0), 0.5, initVector(0.0, 1.0, 0.0), 0};
+    scene[2] = (Sphere){initVector(0, -100.5, -2.0), 100.0, initVector(0.5, 0.5, 0.5), 0};
+    for (int i = 0; i < WIDTH; i++) {
+        map.u[i] = ((2.0 * i / WIDTH) - 1.0) * ((double)WIDTH / HEIGHT);
+    }
+    for (int i = 0; i < HEIGHT; i++) {
+        map.v[i] = 1.0 - 2.0 * i / HEIGHT;
+    }
+
+    drawScene(scene, 3, map, img);
+
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                running = 0;
+                break;
+            }
+        }
+        SDL_UpdateTexture(t, NULL, img, WIDTH * sizeof(uint32_t));
+        SDL_RenderClear(r);
+        SDL_RenderCopy(r, t, NULL, NULL);
+        SDL_RenderPresent(r);
+    }
+    free(img);
+    SDL_DestroyTexture(t);
+    SDL_DestroyRenderer(r);
+    SDL_DestroyWindow(w);
+    SDL_Quit();
+}
