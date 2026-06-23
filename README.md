@@ -2,7 +2,8 @@
 
 A from-scratch, CPU-based 3D raytracing engine written entirely in C. It renders spheres with diffuse lighting, hard shadows, and recursive reflections, while allowing for real-time interactive camera movement in a 3D space.
 
-![Raytracer Demo](image_17b3a0.png)
+<img width="810" height="630" alt="image" src="https://github.com/user-attachments/assets/6975f269-1ecd-437d-a932-695d7eb367f9" />
+
 
 ## 🚀 Key Features
 
