@@ -30,6 +30,7 @@ typedef struct thread_data {
     int sphereCount;
     Coord *map;
     uint32_t *img;
+    Vector cameraPos;
 } ThreadData;
 
 // Sphere intersection test - returns -1 if no hit
@@ -123,7 +124,7 @@ void *renderTile(void *arg) {
             double v = data->map->v[y];
             Vector d = initVector(u, v, -1.0);
             d = normaliseVector(d);
-            Ray ray = {initVector(0.0, 0.0, 0.0), d};
+            Ray ray = {data->cameraPos, d};
             
             // Trace ray with max depth 3
             Vector color = traceRay(ray, data->scene, data->sphereCount, 3);
@@ -144,7 +145,7 @@ void *renderTile(void *arg) {
     return NULL;
 }
 
-void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[]) {
+void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[], Vector cameraPos) {
     pthread_t threads[NUM_THREADS];
     ThreadData t_data[NUM_THREADS];
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -154,6 +155,7 @@ void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[]) {
         t_data[i].map = map;
         t_data[i].scene = scene;
         t_data[i].sphereCount = sphereCount;
+        t_data[i].cameraPos = cameraPos;
         pthread_create(&threads[i], NULL, renderTile, &t_data[i]);
     }
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -184,6 +186,7 @@ int main(void) {
     Coord map;
     int running = 1;
     SDL_Event event;
+    Vector cameraPos = initVector(0.0, 0.0, 0.0);
 
     // Scene setup: 3 spheres
     Sphere scene[3];
@@ -197,15 +200,38 @@ int main(void) {
         map.v[i] = 1.0 - 2.0 * i / HEIGHT;
     }
 
-    drawScene(scene, 3, &map, img);
-
     while (running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = 0;
                 break;
             }
+            if (event.type == SDL_KEYDOWN) {
+                switch (event.key.keysym.sym) {
+                    case SDLK_w:
+                        cameraPos.z -= 0.2;
+                        break;
+                    case SDLK_s:
+                        cameraPos.z += 0.2;
+                        break;
+                    case SDLK_a:
+                        cameraPos.x -= 0.2;
+                        break;
+                    case SDLK_d:
+                        cameraPos.x += 0.2;
+                        break;
+                    case SDLK_q:
+                        cameraPos.y -=0.2;
+                        break;
+                    case SDLK_e:
+                        cameraPos.y += 0.2;
+                        break;                    
+                }
+            }
         }
+
+        drawScene(scene, 3, &map, img, cameraPos);
+
         SDL_UpdateTexture(t, NULL, img, WIDTH * sizeof(uint32_t));
         SDL_RenderClear(r);
         SDL_RenderCopy(r, t, NULL, NULL);
