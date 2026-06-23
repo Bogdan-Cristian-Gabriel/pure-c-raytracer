@@ -2,9 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "vectors.h"
+#include <pthread.h>
 
 #define WIDTH  800
 #define HEIGHT 600
+#define NUM_THREADS 8
 
 typedef struct ray {
     Vector orig, dir;
@@ -17,14 +19,18 @@ typedef struct sphere {
     int reflective;
 } Sphere;
 
-typedef struct hitrecord {
-    double t;
-    Vector P, N, color;
-} HitRecord;
-
 typedef struct coord {
     double u[WIDTH], v[HEIGHT];
 } Coord;
+
+typedef struct thread_data {
+    int start_y;
+    int end_y;
+    Sphere *scene;
+    int sphereCount;
+    Coord *map;
+    uint32_t *img;
+} ThreadData;
 
 // Sphere intersection test - returns -1 if no hit
 double hitSphere(Vector center, double radius, Ray r) {
@@ -108,18 +114,19 @@ Vector traceRay(Ray ray, Sphere scene[], int sphereCount, int depth) {
     return localColor;
 }
 
-void drawScene(Sphere scene[], int sphereCount, Coord map, uint32_t img[]) {
-    for (int y = 0; y < HEIGHT; y++) {
+void *renderTile(void *arg) {
+    ThreadData *data = (ThreadData*)arg;
+    for (int y = data->start_y; y < data->end_y; y++) {
         for (int x = 0; x < WIDTH; x++) {
-            // Generate camera ray for each pixel
-            double u = map.u[x];
-            double v = map.v[y];
+            // Generate camera ray for each tile
+            double u = data->map->u[x];
+            double v = data->map->v[y];
             Vector d = initVector(u, v, -1.0);
             d = normaliseVector(d);
             Ray ray = {initVector(0.0, 0.0, 0.0), d};
             
             // Trace ray with max depth 3
-            Vector color = traceRay(ray, scene, sphereCount, 3);
+            Vector color = traceRay(ray, data->scene, data->sphereCount, 3);
             
             // Convert [0,1] to [0,255] with clamping
             double R = color.x * 255.0;
@@ -131,8 +138,26 @@ void drawScene(Sphere scene[], int sphereCount, Coord map, uint32_t img[]) {
             B = B > 255.0 ? 255.0 : B;
 
             // Pack into framebuffer (ARGB format)
-            img[y * WIDTH + x] = (255 << 24) | ((int)R << 16) | ((int)G << 8) | (int)B;
+            data->img[y * WIDTH + x] = (255 << 24) | ((int)R << 16) | ((int)G << 8) | (int)B;
         }
+    }
+    return NULL;
+}
+
+void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[]) {
+    pthread_t threads[NUM_THREADS];
+    ThreadData t_data[NUM_THREADS];
+    for (int i = 0; i < NUM_THREADS; i++) {
+        t_data[i].start_y = HEIGHT / NUM_THREADS * i;
+        t_data[i].end_y = HEIGHT / NUM_THREADS * (i + 1);
+        t_data[i].img = img;
+        t_data[i].map = map;
+        t_data[i].scene = scene;
+        t_data[i].sphereCount = sphereCount;
+        pthread_create(&threads[i], NULL, renderTile, &t_data[i]);
+    }
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_join(threads[i], 0);
     }
 }
 
@@ -163,7 +188,7 @@ int main(void) {
     // Scene setup: 3 spheres
     Sphere scene[3];
     scene[0] = (Sphere){initVector(0, 0, -2.0), 0.5, initVector(1.0, 0.0, 0.0), 0};
-    scene[1] = (Sphere){initVector(1.0, 0, -3.0), 0.5, initVector(0.0, 1.0, 0.0), 0};
+    scene[1] = (Sphere){initVector(1.0, 0, -3.0), 0.5, initVector(0.0, 1.0, 0.0), 1};
     scene[2] = (Sphere){initVector(0, -100.5, -2.0), 100.0, initVector(0.5, 0.5, 0.5), 0};
     for (int i = 0; i < WIDTH; i++) {
         map.u[i] = ((2.0 * i / WIDTH) - 1.0) * ((double)WIDTH / HEIGHT);
@@ -172,7 +197,7 @@ int main(void) {
         map.v[i] = 1.0 - 2.0 * i / HEIGHT;
     }
 
-    drawScene(scene, 3, map, img);
+    drawScene(scene, 3, &map, img);
 
     while (running) {
         while (SDL_PollEvent(&event)) {
