@@ -15,5 +15,7 @@ Vector normaliseVector(Vector v);
 double dotProduct(Vector v1, Vector v2);
 Vector crossProduct(Vector v1, Vector v2);
 void printVector(Vector v);
+Vector rotateX(Vector v, double angle);
+Vector rotateY(Vector v, double angle);
 
 #endif

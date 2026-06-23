@@ -31,6 +31,7 @@ typedef struct thread_data {
     Coord *map;
     uint32_t *img;
     Vector cameraPos;
+    double pitch, yaw;
 } ThreadData;
 
 // Sphere intersection test - returns -1 if no hit
@@ -123,6 +124,8 @@ void *renderTile(void *arg) {
             double u = data->map->u[x];
             double v = data->map->v[y];
             Vector d = initVector(u, v, -1.0);
+            d = rotateX(d, data->pitch);
+            d = rotateY(d, data->yaw);
             d = normaliseVector(d);
             Ray ray = {data->cameraPos, d};
             
@@ -145,7 +148,8 @@ void *renderTile(void *arg) {
     return NULL;
 }
 
-void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[], Vector cameraPos) {
+void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[],
+               Vector cameraPos, double yaw, double pitch) {
     pthread_t threads[NUM_THREADS];
     ThreadData t_data[NUM_THREADS];
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -156,6 +160,8 @@ void drawScene(Sphere scene[], int sphereCount, Coord *map, uint32_t img[], Vect
         t_data[i].scene = scene;
         t_data[i].sphereCount = sphereCount;
         t_data[i].cameraPos = cameraPos;
+        t_data[i].yaw = yaw;
+        t_data[i].pitch = pitch;
         pthread_create(&threads[i], NULL, renderTile, &t_data[i]);
     }
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -187,6 +193,8 @@ int main(void) {
     int running = 1;
     SDL_Event event;
     Vector cameraPos = initVector(0.0, 0.0, 0.0);
+    double yaw = 0.0, pitch = 0.0;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
 
     // Scene setup: 3 spheres
     Sphere scene[3];
@@ -206,8 +214,21 @@ int main(void) {
                 running = 0;
                 break;
             }
+            if (event.type == SDL_MOUSEMOTION) {
+                yaw += event.motion.xrel * 0.005;
+                pitch -= event.motion.yrel * 0.005;
+                if (pitch > 1.5) {
+                    pitch = 1.5;
+                }
+                if (pitch < -1.5) {
+                    pitch = -1.5;
+                }
+            }
             if (event.type == SDL_KEYDOWN) {
                 switch (event.key.keysym.sym) {
+                    case SDLK_ESCAPE:
+                        running = 0;
+                        break;
                     case SDLK_w:
                         cameraPos.z -= 0.2;
                         break;
@@ -230,7 +251,7 @@ int main(void) {
             }
         }
 
-        drawScene(scene, 3, &map, img, cameraPos);
+        drawScene(scene, 3, &map, img, cameraPos, yaw, pitch);
 
         SDL_UpdateTexture(t, NULL, img, WIDTH * sizeof(uint32_t));
         SDL_RenderClear(r);
